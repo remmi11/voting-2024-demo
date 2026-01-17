@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>US Election Results Map</title>
+    <script src='https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css' rel='stylesheet' />
+    <script src="https://unpkg.com/topojson@3"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+        .map-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1;
+            max-width: 300px;
+        }
+        .map-overlay h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .legend {
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .legend-color {
+            width: 30px;
+            height: 18px;
+            margin-right: 10px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+        .mapboxgl-popup-content {
+            padding: 12px 15px;
+        }
+        .zoom-info {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+            font-size: 11px;
+            color: #666;
+        }
+        .zoom-info div {
+            margin: 3px 0;
+        }
+        .current-zoom {
+            font-weight: 600;
+            color: #333;
+        }
+        .popup-content {
+            font-size: 13px;
+        }
+        .popup-content strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">Loading map data...</div>
+    <div id="map"></div>
+    <div class="map-overlay">
+        <h3>US Election Results</h3>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: #2E5BFF;"></div>
+                <span>Democrat Won</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #FF2E2E;"></div>
+                <span>Republican Won</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #999;"></div>
+                <span>No data</span>
+            </div>
+        </div>
+        <div class="zoom-info">
+            <div class="current-zoom">Current Zoom: <span id="current-zoom">-</span></div>
+            <div>Zoom 0-4: State level</div>
+            <div>Zoom 5-7: County level</div>
+            <div>Zoom 8+: Precinct level</div>
+        </div>
+        <p style="margin-top: 12px; font-size: 11px; color: #666;">
+            Click on a region for details. Zoom in to see more detail.
+        </p>
+    </div>
+
+    <script>
+        // You'll need to add your Mapbox access token here
+        // Get a free token at: https://account.mapbox.com/
+        mapboxgl.accessToken = 'pk.eyJ1IjoiZXhhbXBsZXMiLCJhIjoiY2p0MG01MXRqMW45cjQzb2R6b2ptc3J4MSJ9.zA2W0IkI0c6KaAhJfk9bWg';
+
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/light-v11',
+            center: [-98.5, 39.8], // Center on continental US
+            zoom: 4
+        });
+
+        // Track and display current zoom level
+        function updateZoomDisplay() {
+            const zoom = Math.round(map.getZoom() * 10) / 10;
+            document.getElementById('current-zoom').textContent = zoom;
+        }
+
+        map.on('zoom', updateZoomDisplay);
+
+        // Function to determine color based on who won
+        function getColor(pctDemLead) {
+            if (pctDemLead === null || pctDemLead === undefined) return '#999999';
+            return pctDemLead > 0 ? '#2E5BFF' : '#FF2E2E';
+        }
+
+        map.on('load', async () => {
+            try {
+                // Define the data files to load
+                // For now, we'll use the Arizona precincts as an example
+                // In production, you would have separate files:
+                // - states.topojson (state-level aggregated results)
+                // - counties.topojson (county-level aggregated results)
+                // - precincts-[STATE].topojson (precinct-level by state)
+                
+                const dataFiles = [
+                    {
+                        name: 'precincts',
+                        file: 'AZ-precincts-with-results.topojson',
+                        objectKey: 'AZ',
+                        minZoom: 8,
+                        maxZoom: 22,
+                        layerType: 'precinct'
+                    }
+                    // Add more data sources here:
+                    // { name: 'states', file: 'states.topojson', objectKey: 'states', minZoom: 0, maxZoom: 4.99, layerType: 'state' },
+                    // { name: 'counties', file: 'counties.topojson', objectKey: 'counties', minZoom: 5, maxZoom: 7.99, layerType: 'county' },
+                ];
+
+                // Load and add all data sources
+                for (const dataConfig of dataFiles) {
+                    const response = await fetch(dataConfig.file);
+                    const topology = await response.json();
+                    
+                    // Convert TopoJSON to GeoJSON
+                    const geojson = topojson.feature(topology, topology.objects[dataConfig.objectKey]);
+                    
+                    // Add colors to features
+                    geojson.features.forEach(feature => {
+                        const pctDemLead = feature.properties.pct_dem_lead;
+                        feature.properties.color = getColor(pctDemLead);
+                        feature.properties.layer_type = dataConfig.layerType;
+                    });
+
+                    // Add source
+                    map.addSource(dataConfig.name, {
+                        type: 'geojson',
+                        data: geojson
+                    });
+
+                    // Add fill layer with zoom constraints
+                    map.addLayer({
+                        id: `${dataConfig.name}-fill`,
+                        type: 'fill',
+                        source: dataConfig.name,
+                        minzoom: dataConfig.minZoom,
+                        maxzoom: dataConfig.maxZoom,
+                        paint: {
+                            'fill-color': ['get', 'color'],
+                            'fill-opacity': 0.7
+                        }
+                    });
+
+                    // Add outline layer with zoom constraints
+                    map.addLayer({
+                        id: `${dataConfig.name}-outline`,
+                        type: 'line',
+                        source: dataConfig.name,
+                        minzoom: dataConfig.minZoom,
+                        maxzoom: dataConfig.maxZoom,
+                        paint: {
+                            'line-color': '#666',
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                dataConfig.minZoom, 0.3,
+                                dataConfig.maxZoom, 0.8
+                            ],
+                            'line-opacity': 0.3
+                        }
+                    });
+
+                    // Add click handlers for this layer
+                    addClickHandler(dataConfig.name);
+                }
+
+                // Create popup
+                const popup = new mapboxgl.Popup({
+                    closeButton: true,
+                    closeOnClick: true
+                });
+
+                // Function to add click handler for a specific layer
+                function addClickHandler(sourceName) {
+                    map.on('click', `${sourceName}-fill`, (e) => {
+                        if (e.features.length > 0) {
+                            const feature = e.features[0];
+                            const props = feature.properties;
+                            const layerType = props.layer_type || 'precinct';
+                            
+                            const demVotes = props.votes_dem || 0;
+                            const repVotes = props.votes_rep || 0;
+                            const totalVotes = props.votes_total || 0;
+                            const margin = props.pct_dem_lead !== null ? props.pct_dem_lead.toFixed(1) : 'N/A';
+                            
+                            // Customize label based on layer type
+                            let locationLabel = 'Precinct';
+                            if (layerType === 'state') locationLabel = 'State';
+                            if (layerType === 'county') locationLabel = 'County';
+                            
+                            // Use name if available, otherwise use GEOID
+                            const locationId = props.name || props.GEOID || 'Unknown';
+                            
+                            const html = `
+                                <div class="popup-content">
+                                    <div><strong>${locationLabel}: ${locationId}</strong></div>
+                                    <div>Joseph Biden: ${demVotes.toLocaleString()}</div>
+                                    <div>Donald Trump: ${repVotes.toLocaleString()}</div>
+                                    <div>Total: ${totalVotes.toLocaleString()}</div>
+                                    <div>Percent Dem Lead: ${margin}%</div>
+                                </div>
+                            `;
+                            
+                            popup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+                        }
+                    });
+
+                    // Change cursor on hover
+                    map.on('mouseenter', `${sourceName}-fill`, () => {
+                        map.getCanvas().style.cursor = 'pointer';
+                    });
+
+                    map.on('mouseleave', `${sourceName}-fill`, () => {
+                        map.getCanvas().style.cursor = '';
+                    });
+                }
+
+                // Initialize zoom display
+                updateZoomDisplay();
+
+                // Hide loading message
+                document.getElementById('loading').style.display = 'none';
+
+            } catch (error) {
+                console.error('Error loading map data:', error);
+                document.getElementById('loading').innerHTML = `Error loading map data: ${error.message}<br>Please ensure all TopoJSON files are in the same directory.`;
+            }
+        });
+
+        // Add navigation controls
+        map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    </script>
+</body>
+</html>
